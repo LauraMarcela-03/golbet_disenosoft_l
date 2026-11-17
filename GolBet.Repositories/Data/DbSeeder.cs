@@ -1,22 +1,42 @@
 ﻿using GolBet.Entities;
 using GolBet.Entities.Enums;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace GolBet.Repositories.Data
+namespace GolBet.Repositories.Data;
+
+public static class DbSeeder
 {
-    public static class DbSeeder
+    // Role names as constants: a typo won't compile instead of failing silently 
+    public const string AdminRole = "Admin";
+    public const string BettorRole = "Apostador";
+
+    public static async Task SeedAsync(
+        AppDbContext context,
+        RoleManager<IdentityRole> roleManager,
+        UserManager<AppUser> userManager)
     {
-        public static async Task SeedAsync(AppDbContext context)
-        {
-            // Applies any pending migration (creates the DB if it does not exist) 
-            await context.Database.MigrateAsync();
+        // Applies any pending migration (creates the DB if it does not exist) 
+        await context.Database.MigrateAsync();
 
-            if (await context.Teams.AnyAsync()) return;   // idempotence guard 
+        await SeedDomainAsync(context);
+        await SeedIdentityAsync(roleManager, userManager);
+    }
 
-            // ---- Teams ---- 
-            var teams = new List<Team>
+    // ---- Domain data: teams and matches (Module 3) ---- 
+    private static async Task SeedDomainAsync(AppDbContext context)
+    {
+        if (await context.Teams.AnyAsync()) return;   // idempotence guard 
+
+        // ---- Teams ---- 
+        var teams = new List<Team>
         {
-            new() { Name = "Atlético Nacional",       City = "Medellín",     CrestUrl = "https://placehold.co/80x80/006633/ffffff?text=NAC" },
+            new() {
+                Name = "Atlético Nacional",
+                City = "Medellín",
+                CrestUrl = "https://placehold.co/80x80/006633/ffffff?text=NAC" 
+                //CrestUrl = "https://upload.wikimedia.org/wikipedia/commons/a/ae/Atletico_Nacional_Logo.svg?utm_source=es.wikipedia.org&utm_campaign=index&utm_content=original" 
+            },
             new() { Name = "Independiente Medellín",  City = "Medellín",     CrestUrl = "https://placehold.co/80x80/cc0000/ffffff?text=DIM" },
             new() { Name = "Millonarios",             City = "Bogotá",       CrestUrl = "https://placehold.co/80x80/003399/ffffff?text=MIL" },
             new() { Name = "Independiente Santa Fe",  City = "Bogotá",       CrestUrl = "https://placehold.co/80x80/cc0000/ffffff?text=SFE" },
@@ -26,13 +46,13 @@ namespace GolBet.Repositories.Data
             new() { Name = "Once Caldas",             City = "Manizales",    CrestUrl = "https://placehold.co/80x80/ffffff/000000?text=ONC" }
         };
 
-            context.Teams.AddRange(teams);
-            await context.SaveChangesAsync();   // CreatedDate stamped automatically 
+        context.Teams.AddRange(teams);
+        await context.SaveChangesAsync();   // CreatedDate stamped automatically 
 
-            // ---- Matches ---- 
-            var today = DateTime.UtcNow.Date;
+        // ---- Matches ---- 
+        var today = DateTime.UtcNow.Date;
 
-            var matches = new List<Match>
+        var matches = new List<Match>
         { 
             // Scheduled: open for betting 
             new()
@@ -40,7 +60,9 @@ namespace GolBet.Repositories.Data
                 HomeTeamId = teams[0].Id, AwayTeamId = teams[1].Id,    // clásico paisa 
                 Date = today.AddDays(3).AddHours(20),
                 Status = MatchStatus.Scheduled,
-                HomeOdds = 2.10m, DrawOdds = 3.20m, AwayOdds = 3.60m
+                HomeOdds = 2.10m,
+                DrawOdds = 3.20m,
+                AwayOdds = 3.60m
             },
             new()
             {
@@ -62,7 +84,7 @@ namespace GolBet.Repositories.Data
                 Date = today.AddDays(10).AddHours(16),
                 Status = MatchStatus.Scheduled,
                 HomeOdds = 1.85m, DrawOdds = 3.40m, AwayOdds = 4.20m
-            }, 
+            },  
 
             // InProgress: betting closed, no result yet 
             new()
@@ -71,7 +93,7 @@ namespace GolBet.Repositories.Data
                 Date = DateTime.UtcNow.AddHours(-1),
                 Status = MatchStatus.InProgress,
                 HomeOdds = 2.60m, DrawOdds = 3.05m, AwayOdds = 2.80m
-            }, 
+            },  
 
             // Finished: has a final score 
             new()
@@ -84,8 +106,36 @@ namespace GolBet.Repositories.Data
             }
         };
 
-            context.Matches.AddRange(matches);
-            await context.SaveChangesAsync();
+        context.Matches.AddRange(matches);
+        await context.SaveChangesAsync();
+    }
+
+    // ---- Identity data: roles and admin user (Module 7) ---- 
+    private static async Task SeedIdentityAsync(
+        RoleManager<IdentityRole> roleManager,
+        UserManager<AppUser> userManager)
+    {
+        // Roles (idempotent) 
+        foreach (var role in new[] { AdminRole, BettorRole })
+        {
+            if (!await roleManager.RoleExistsAsync(role))
+                await roleManager.CreateAsync(new IdentityRole(role));
+        }
+
+        // Admin user (idempotent) 
+        if (await userManager.FindByEmailAsync("admin@golbet.com") is null)
+        {
+            var admin = new AppUser
+            {
+                UserName = "admin@golbet.com",
+                Email = "admin@golbet.com",
+                FullName = "Administrador GolBet",
+                Balance = 0m,              // admins manage, they do not bet 
+                EmailConfirmed = true
+            };
+
+            await userManager.CreateAsync(admin, "Admin123*");
+            await userManager.AddToRoleAsync(admin, AdminRole);
         }
     }
 }
